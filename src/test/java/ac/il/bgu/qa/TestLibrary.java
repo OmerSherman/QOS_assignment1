@@ -1,5 +1,6 @@
 package ac.il.bgu.qa;
 
+import ac.il.bgu.qa.errors.BookAlreadyBorrowedException;
 import ac.il.bgu.qa.errors.BookNotFoundException;
 import ac.il.bgu.qa.services.DatabaseService;
 import ac.il.bgu.qa.services.ReviewService;
@@ -9,6 +10,8 @@ import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -86,7 +89,6 @@ public class TestLibrary {
         // 3. Assertion
         assertNotNull(ex);
         Assertions.assertEquals("Invalid user Id." , ex.getMessage());
-
     }
 
     @Test
@@ -109,6 +111,72 @@ public class TestLibrary {
         //3.Assertion
         assertNotNull(ex);
         assertEquals("Book not found!" , ex.getMessage());
+    }
 
+    @Test
+    void givenBookIsAlreadyBorrowed_whengetBookByISBNThenThrows(){
+        //1. Arrange
+        //1.1 create an instance of library  and book with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(true);
+
+        //2. Act
+        BookAlreadyBorrowedException ex = null;
+        try {
+            library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+        } catch (BookAlreadyBorrowedException exception){
+            ex = exception;
+        }
+
+        //3.Assertion
+        assertNotNull(ex);
+        assertEquals("Book was already borrowed!" , ex.getMessage());
+
+    }
+
+    @Test
+    void givenAvailableBookAndValidUserAndfailedReviews_thenstillReturnBook(){
+        //1.Arrange
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock and ReviewsServices
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(false);
+
+        //2. Act
+        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+
+        //3. Assertion
+        assertSame(returnedBook, mockBook);
+    }
+
+    @Test
+    void givenAvailableBookAndValidUser_whengetBookByISBN_thenNotifyUserandReturnBook(){
+        //1.Arrange
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock and ReviewsServices
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book", "interesting book"));
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(false);
+
+        //2. Act
+        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+
+        //3. Assertion
+        assertSame(returnedBook, mockBook);
+        Mockito.verify(mockUser).sendNotification(Mockito.anyString());
     }
 }
