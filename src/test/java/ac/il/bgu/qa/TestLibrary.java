@@ -4,16 +4,14 @@ import ac.il.bgu.qa.errors.*;
 import ac.il.bgu.qa.services.DatabaseService;
 import ac.il.bgu.qa.services.NotificationService;
 import ac.il.bgu.qa.services.ReviewService;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.*;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.*;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.List;
 import java.util.stream.Stream;
@@ -26,7 +24,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+
 public class TestLibrary {
+
 
     private static final String VALID_ISBN = "978-0-306-40615-7";
     private static final String VALID_ISBN_NO_HYPHENS = "9780306406157";
@@ -40,32 +40,372 @@ public class TestLibrary {
     private static final String VALID_USER_NAME = "Some User";
 
     @Mock
-    private DatabaseService databaseServiceMock;
+    DatabaseService databaseServiceMock;
 
     @Mock
-    private ReviewService reviewServiceMock;
+    ReviewService reviewServiceMock;
 
     @Mock
-    private NotificationService notificationServiceMock;
+    NotificationService notificationServiceMock;
 
-    private AutoCloseable mocksHandle;
     private Library library;
 
+    @BeforeAll
+    static void setupAll() {
+        System.out.println("Initializing resources for all the tests");
+        // This method will be executed before all test methods of this group (e.g., Database Connection)
+    }
+
     @BeforeEach
-    void init() {
-        // Initialize the @Mock fields before each test and create a fresh Library on top of them
-        mocksHandle = MockitoAnnotations.openMocks(this);
+    void init(){
+        MockitoAnnotations.openMocks(this); // This function init the mocks before each test
         library = new Library(databaseServiceMock, reviewServiceMock);
     }
 
-    @AfterEach
-    void tearDown() throws Exception {
-        mocksHandle.close();
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "",                    // empty
+            "978030640615",        // 12 digits
+            "97803064061577",      // 14 digits
+            "978030640615X",       // not a digit
+            "9780306406158"        // Wrong check-sum
+    })
+    void givenInValidISBN_whenGetBookByISBN_thenThrowsIllegalArgumentException(String isbn ){
+        //1. Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+
+        //2. Act
+        IllegalArgumentException ex = null;
+        try{
+            library.getBookByISBN(isbn, "user");
+        }catch (IllegalArgumentException exception){
+            ex = exception;
+        }
+
+        //3.  Assert
+        assertNotNull(ex);
+        assertEquals("Invalid ISBN.", ex.getMessage());
+
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {
+            "",
+            "123456789", //to short
+            "12345678910111213"// to long
+    })
+    void givenInValidUserID_whenGetBookByISBN_thenThrowsIllegalArgumentException(String user){
+        //1. Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+
+        //2 act
+        IllegalArgumentException ex = null;
+        try{
+            library.getBookByISBN(VALID_ISBN, user);
+        }catch (IllegalArgumentException exception){
+            ex = exception;
+        }
+
+        // 3. Assertion
+        assertNotNull(ex);
+        Assertions.assertEquals("Invalid user Id." , ex.getMessage());
+    }
+
+    @Test
+    void givenBookNotinDB_whenGetBookByISBN_thenThrowsBookNotFoundException(){
+        //1. Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
+
+        //2. Act
+        //throw new BookNotFoundException("Book not found!");
+        BookNotFoundException ex = null;
+        try {
+            library.getBookByISBN(VALID_ISBN,VALID_USER_ID);
+        }catch (BookNotFoundException exception){
+            ex = exception;
+        }
+
+        //3.Assertion
+        assertNotNull(ex);
+        assertEquals("Book not found!" , ex.getMessage());
+    }
+
+    @Test
+    void givenBookIsAlreadyBorrowed_whenGetBookByISBN_thenThrowsBookAlreadyBorrowedException(){
+        //1. Arrange
+        //1.1 create an instance of library  and book with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(true);
+
+        //2. Act
+        BookAlreadyBorrowedException ex = null;
+        try {
+            library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+        } catch (BookAlreadyBorrowedException exception){
+            ex = exception;
+        }
+
+        //3.Assertion
+        assertNotNull(ex);
+        assertEquals("Book was already borrowed!" , ex.getMessage());
+
+    }
+
+    @Test
+    void givenAvailableBookAndValidUserAndfailedReviews_whenGetBookByISBN_thenStillReturnBook(){
+        //1.Arrange
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock and ReviewsServices
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(false);
+
+        //2. Act
+        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+
+        //3. Assertion
+        assertSame(returnedBook, mockBook);
+    }
+
+    @Test
+    void givenAvailableBookAndValidUser_whenGetBookByISBN_thenNotifyUserandReturnBook(){
+        //1.Arrange
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock and ReviewsServices
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book", "interesting book"));
+        //1.3  Stubbing - Define behavior for Book
+        Mockito.when(mockBook.isBorrowed()).thenReturn(false);
+
+        //2. Act
+        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
+
+        //3. Assertion
+        assertSame(returnedBook, mockBook);
+        verify(mockUser).sendNotification(Mockito.anyString());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {
+            "",                    // empty
+            "978030640615",        // 12 digits
+            "97803064061577",      // 14 digits
+            "978030640615X",       // not a digit
+            "9780306406158"        // Wrong check-sum
+    })
+    void givenInValidISBN_whenNotifyUserWithBookReviews_thenThrowsIllegalArgumentException(String isbn){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+
+        //2 act
+        IllegalArgumentException ex = null;
+        try{
+            library.notifyUserWithBookReviews(isbn, VALID_USER_ID);
+        }catch (IllegalArgumentException exception){
+            ex = exception;
+        }
+
+        // 3. Assertion
+        assertNotNull(ex);
+        Assertions.assertEquals("Invalid ISBN." , ex.getMessage());
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {
+            "",
+            "123456789", //to short
+            "12345678910111213"// to long
+    })
+    void givenInValidUserID_whenNotifyUserWithBookReviews_thenThrowsIllegalArgumentException(String user){
+        //1. Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+
+        //2 act
+        IllegalArgumentException ex = null;
+        try{
+            library.notifyUserWithBookReviews(VALID_ISBN, user);
+        }catch (IllegalArgumentException exception){
+            ex = exception;
+        }
+
+        // 3. Assertion
+        assertNotNull(ex);
+        Assertions.assertEquals("Invalid user Id." , ex.getMessage());
+    }
+
+    @Test
+    void givenBookNotFound_whenNotifyUserWithBookReviews_thenThrowsBookNotFoundException(){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        //1.2  Stubbing - Define behavior for databaseServiceMock and ReviewsServices
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
+
+        //2.Act
+        BookNotFoundException ex = null;
+        try {
+            library.notifyUserWithBookReviews(VALID_ISBN,VALID_USER_ID);
+        }catch (BookNotFoundException exception){
+            ex = exception;
+        }
+
+        //3. Assertion
+        assertNotNull(ex);
+        Assertions.assertEquals("Book not found!" , ex.getMessage());
+    }
+
+    @Test
+    void givenUserNotRegisted_whenNotifyUserWithBookReviews_thenThrowsUserNotRegisteredException(){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(null);
+
+        //2.Act
+        UserNotRegisteredException ex = null;
+        try {
+            library.notifyUserWithBookReviews(VALID_ISBN,VALID_USER_ID);
+        }catch (UserNotRegisteredException exception){
+            ex = exception;
+        }
+
+        //3. Assertion
+        assertNotNull(ex);
+        Assertions.assertEquals("User not found!" , ex.getMessage());
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    void givenNoReviews_whenNotifyUserWithBookReviews_thenThrowsNoReviewsFoundException(List<String> reviews){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(reviews);
+        //2.Act
+        NoReviewsFoundException ex = null;
+        try {
+            library.notifyUserWithBookReviews(VALID_ISBN,VALID_USER_ID);
+        }catch (NoReviewsFoundException exception){
+            ex = exception;
+        }
+
+        //3. Assertion
+        assertNotNull(ex);
+        assertEquals("No reviews found!" ,ex.getMessage());
+        verify(reviewServiceMock).close();
+
+
+    }
+    @Test
+    void givenUnavailableReviesService_whenNotifyUserWithBookReviews_thenThrowsReviewServiceUnavailableException(){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenThrow(new ReviewException("Review Service Unavailable"));
+        //2.Act
+        ReviewServiceUnavailableException ex = null;
+        try {
+            library.notifyUserWithBookReviews(VALID_ISBN,VALID_USER_ID);
+        }catch (ReviewServiceUnavailableException exception){
+            ex = exception;
+        }
+
+        //3. Assertion
+        assertNotNull(ex);
+        assertEquals("Review service unavailable!" ,ex.getMessage());
+        verify(reviewServiceMock).close();
+    }
+
+    @Test
+    void givenNotificationError_whenNotifyUserWithBookReviews_thenThrowsNotificationException(){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book" , "very interseting"));
+        Mockito.doThrow(new NotificationException("error"))
+                .when(mockUser).sendNotification(Mockito.anyString());
+        //2.Act
+        NotificationException ex = null;
+        try {
+            library.notifyUserWithBookReviews(VALID_ISBN,VALID_USER_ID);
+        }catch (NotificationException exception){
+            ex = exception;
+        }
+
+        //3. Assertion
+        assertNotNull(ex);
+        assertEquals("Notification failed!" ,ex.getMessage());
+        verify(reviewServiceMock).close();
+        verify(mockUser, Mockito.times(5)).sendNotification(Mockito.anyString());
+    }
+
+    @Test
+    void givenValidArguments_whenNotifyUserWithBookReviews_thenUserNotified(){
+        //1.Arrange
+        //1.1 create an instance of library with mocks
+        Library library = new Library(databaseServiceMock, reviewServiceMock);
+        Book mockBook = Mockito.mock(Book.class);
+        User mockUser = Mockito.mock(User.class);
+
+        //1.2  Stubbing - Define behavior for databaseServiceMock
+        Mockito.when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(mockBook);
+        Mockito.when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(mockUser);
+        Mockito.when(mockBook.getTitle()).thenReturn("book");
+        Mockito.when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book" , "very interseting"));
+
+        //2. Act
+        library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID);
+
+        //3.Assert
+        Mockito.verify(mockUser, Mockito.times(1))
+                .sendNotification("Reviews for 'book':\ngood book\nvery interseting");
+        Mockito.verify(reviewServiceMock).close();
     }
 
     // Helpers and data providers
 
-    // Creates a mocked Book with the given properties.
     private Book createBookMock(String isbn, String title, String author, boolean borrowed) {
         Book book = Mockito.mock(Book.class);
         when(book.getISBN()).thenReturn(isbn);
@@ -75,12 +415,10 @@ public class TestLibrary {
         return book;
     }
 
-    // Creates a mocked, well-formed Book that is not borrowed.
     private Book createValidBookMock() {
         return createBookMock(VALID_ISBN, VALID_TITLE, VALID_AUTHOR, false);
     }
 
-    // Creates a mocked User with the given properties.
     private User createUserMock(String id, String name, NotificationService notificationService) {
         User user = Mockito.mock(User.class);
         when(user.getId()).thenReturn(id);
@@ -89,7 +427,6 @@ public class TestLibrary {
         return user;
     }
 
-    // ISBNs that are not valid ISBN-13 values.
     static Stream<String> invalidIsbnProvider() {
         return Stream.of(
                 null,
@@ -104,7 +441,6 @@ public class TestLibrary {
         );
     }
 
-    // User ids that are not exactly 12 digits.
     static Stream<String> invalidUserIdProvider() {
         return Stream.of(
                 null,
@@ -117,7 +453,6 @@ public class TestLibrary {
         );
     }
 
-    // Authors that violate the author-name rules
     static Stream<String> invalidAuthorProvider() {
         return Stream.of(
                 null,
@@ -144,7 +479,6 @@ public class TestLibrary {
         );
     }
 
-    // Authors that are valid and contain allowed special characters
     static Stream<String> validAuthorProvider() {
         return Stream.of(
                 VALID_AUTHOR,
@@ -159,7 +493,7 @@ public class TestLibrary {
     // addBook
 
     @Test
-    void givenNullBook_whenAddBook_thenThrowsInvalidBook() {
+    void givenNullBook_whenAddBook_thenThrowsIllegalArgumentException() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.addBook(null));
         assertEquals("Invalid book.", ex.getMessage());
@@ -168,7 +502,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidIsbnProvider")
-    void givenInvalidIsbn_whenAddBook_thenThrowsInvalidIsbn(String isbn) {
+    void givenInvalidIsbn_whenAddBook_thenThrowsIllegalArgumentException(String isbn) {
         Book book = createBookMock(isbn, VALID_TITLE, VALID_AUTHOR, false);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.addBook(book));
@@ -178,7 +512,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @NullAndEmptySource
-    void givenNullOrEmptyTitle_whenAddBook_thenThrowsInvalidTitle(String title) {
+    void givenNullOrEmptyTitle_whenAddBook_thenThrowsIllegalArgumentException(String title) {
         Book book = createBookMock(VALID_ISBN, title, VALID_AUTHOR, false);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.addBook(book));
@@ -188,7 +522,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidAuthorProvider")
-    void givenInvalidAuthor_whenAddBook_thenThrowsInvalidAuthor(String author) {
+    void givenInvalidAuthor_whenAddBook_thenThrowsIllegalArgumentException(String author) {
         Book book = createBookMock(VALID_ISBN, VALID_TITLE, author, false);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.addBook(book));
@@ -197,7 +531,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBorrowedBook_whenAddBook_thenThrowsInvalidBorrowedState() {
+    void givenBorrowedBook_whenAddBook_thenThrowsIllegalArgumentException() {
         Book book = createBookMock(VALID_ISBN, VALID_TITLE, VALID_AUTHOR, true);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.addBook(book));
@@ -206,7 +540,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBookAlreadyInDatabase_whenAddBook_thenThrowsAndDoesNotAdd() {
+    void givenBookAlreadyInDatabase_whenAddBook_thenThrowsIllegalArgumentException() {
         Book book = createValidBookMock();
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(Mockito.mock(Book.class));
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -235,7 +569,7 @@ public class TestLibrary {
     // registerUser
 
     @Test
-    void givenNullUser_whenRegisterUser_thenThrowsInvalidUser() {
+    void givenNullUser_whenRegisterUser_thenThrowsIllegalArgumentException() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.registerUser(null));
         assertEquals("Invalid user.", ex.getMessage());
@@ -244,7 +578,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidUserIdProvider")
-    void givenInvalidUserId_whenRegisterUser_thenThrowsInvalidUserId(String userId) {
+    void givenInvalidUserId_whenRegisterUser_thenThrowsIllegalArgumentException(String userId) {
         User user = createUserMock(userId, VALID_USER_NAME, notificationServiceMock);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.registerUser(user));
@@ -254,7 +588,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @NullAndEmptySource
-    void givenNullOrEmptyUserName_whenRegisterUser_thenThrowsInvalidUserName(String name) {
+    void givenNullOrEmptyUserName_whenRegisterUser_thenThrowsIllegalArgumentException(String name) {
         User user = createUserMock(VALID_USER_ID, name, notificationServiceMock);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.registerUser(user));
@@ -263,7 +597,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenNullNotificationService_whenRegisterUser_thenThrowsInvalidNotificationService() {
+    void givenNullNotificationService_whenRegisterUser_thenThrowsIllegalArgumentException() {
         User user = createUserMock(VALID_USER_ID, VALID_USER_NAME, null);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.registerUser(user));
@@ -272,7 +606,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenUserAlreadyExists_whenRegisterUser_thenThrowsAndDoesNotRegister() {
+    void givenUserAlreadyExists_whenRegisterUser_thenThrowsIllegalArgumentException() {
         User user = createUserMock(VALID_USER_ID, VALID_USER_NAME, notificationServiceMock);
         when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(Mockito.mock(User.class));
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -294,7 +628,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidIsbnProvider")
-    void givenInvalidIsbn_whenBorrowBook_thenThrowsInvalidIsbn(String isbn) {
+    void givenInvalidIsbn_whenBorrowBook_thenThrowsIllegalArgumentException(String isbn) {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.borrowBook(isbn, VALID_USER_ID));
         assertEquals("Invalid ISBN.", ex.getMessage());
@@ -302,7 +636,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBookNotInDatabase_whenBorrowBook_thenThrowsBookNotFound() {
+    void givenBookNotInDatabase_whenBorrowBook_thenThrowsBookNotFoundException() {
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
         BookNotFoundException ex = assertThrows(BookNotFoundException.class,
                 () -> library.borrowBook(VALID_ISBN, VALID_USER_ID));
@@ -312,7 +646,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidUserIdProvider")
-    void givenInvalidUserId_whenBorrowBook_thenThrowsInvalidUserId(String userId) {
+    void givenInvalidUserId_whenBorrowBook_thenThrowsIllegalArgumentException(String userId) {
         Book book = createValidBookMock();
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -323,7 +657,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenUserNotRegistered_whenBorrowBook_thenThrowsUserNotRegistered() {
+    void givenUserNotRegistered_whenBorrowBook_thenThrowsUserNotRegisteredException() {
         Book book = createValidBookMock();
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
         when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(null);
@@ -335,7 +669,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBookAlreadyBorrowed_whenBorrowBook_thenThrowsBookAlreadyBorrowed() {
+    void givenBookAlreadyBorrowed_whenBorrowBook_thenThrowsBookAlreadyBorrowedException() {
         Book book = createBookMock(VALID_ISBN, VALID_TITLE, VALID_AUTHOR, true);
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
         when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(Mockito.mock(User.class));
@@ -360,7 +694,7 @@ public class TestLibrary {
 
     @ParameterizedTest
     @MethodSource("invalidIsbnProvider")
-    void givenInvalidIsbn_whenReturnBook_thenThrowsInvalidIsbn(String isbn) {
+    void givenInvalidIsbn_whenReturnBook_thenThrowsIllegalArgumentException(String isbn) {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> library.returnBook(isbn));
         assertEquals("Invalid ISBN.", ex.getMessage());
@@ -368,7 +702,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBookNotInDatabase_whenReturnBook_thenThrowsBookNotFound() {
+    void givenBookNotInDatabase_whenReturnBook_thenThrowsBookNotFoundException() {
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
         BookNotFoundException ex = assertThrows(BookNotFoundException.class,
                 () -> library.returnBook(VALID_ISBN));
@@ -377,7 +711,7 @@ public class TestLibrary {
     }
 
     @Test
-    void givenBookNotBorrowed_whenReturnBook_thenThrowsBookNotBorrowed() {
+    void givenBookNotBorrowed_whenReturnBook_thenThrowsBookNotBorrowedException() {
         Book book = createValidBookMock();
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
         BookNotBorrowedException ex = assertThrows(BookNotBorrowedException.class,
@@ -396,102 +730,6 @@ public class TestLibrary {
         verify(databaseServiceMock).returnBook(VALID_ISBN);
     }
 
-    // notifyUserWithBookReviews
-
-    @ParameterizedTest
-    @MethodSource("invalidIsbnProvider")
-    void givenInvalidIsbn_whenNotifyUserWithBookReviews_thenThrowsInvalidIsbn(String isbn) {
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> library.notifyUserWithBookReviews(isbn, VALID_USER_ID));
-        assertEquals("Invalid ISBN.", ex.getMessage());
-        verifyNoInteractions(databaseServiceMock);
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @ParameterizedTest
-    @MethodSource("invalidUserIdProvider")
-    void givenInvalidUserId_whenNotifyUserWithBookReviews_thenThrowsInvalidUserId(String userId) {
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, userId));
-        assertEquals("Invalid user Id.", ex.getMessage());
-        verifyNoInteractions(databaseServiceMock);
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @Test
-    void givenBookNotInDatabase_whenNotifyUserWithBookReviews_thenThrowsBookNotFound() {
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
-        BookNotFoundException ex = assertThrows(BookNotFoundException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
-        assertEquals("Book not found!", ex.getMessage());
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @Test
-    void givenUserNotRegistered_whenNotifyUserWithBookReviews_thenThrowsUserNotRegistered() {
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(createValidBookMock());
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(null);
-        UserNotRegisteredException ex = assertThrows(UserNotRegisteredException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
-        assertEquals("User not found!", ex.getMessage());
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @ParameterizedTest
-    @NullAndEmptySource
-    void givenNoReviews_whenNotifyUserWithBookReviews_thenThrowsNoReviewsFoundAndClosesService(
-            List<String> reviews) {
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(createValidBookMock());
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(reviews);
-        NoReviewsFoundException ex = assertThrows(NoReviewsFoundException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
-        assertEquals("No reviews found!", ex.getMessage());
-        verify(reviewServiceMock).close();
-        verifyNoInteractions(user);
-    }
-
-    @Test
-    void givenReviewServiceFails_whenNotifyUserWithBookReviews_thenThrowsServiceUnavailableAndClosesService() {
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(createValidBookMock());
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN))
-                .thenThrow(new ReviewException("Review Service Unavailable"));
-        ReviewServiceUnavailableException ex = assertThrows(ReviewServiceUnavailableException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
-        assertEquals("Review service unavailable!", ex.getMessage());
-        verify(reviewServiceMock).close();
-        verifyNoInteractions(user);
-    }
-
-    @Test
-    void givenSingleReview_whenNotifyUserWithBookReviews_thenUserNotifiedWithFormattedMessage() {
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN))
-                .thenReturn(createBookMock(VALID_ISBN, "Dune", VALID_AUTHOR, false));
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("great"));
-        library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID);
-        verify(user, times(1)).sendNotification("Reviews for 'Dune':\ngreat");
-        verify(reviewServiceMock).close();
-    }
-
-    @Test
-    void givenSeveralReviews_whenNotifyUserWithBookReviews_thenUserNotifiedWithAllReviews() {
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN))
-                .thenReturn(createBookMock(VALID_ISBN, "Dune", VALID_AUTHOR, false));
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN))
-                .thenReturn(List.of("good book", "very interesting", "too long"));
-        library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID);
-        verify(user, times(1))
-                .sendNotification("Reviews for 'Dune':\ngood book\nvery interesting\ntoo long");
-        verify(reviewServiceMock).close();
-    }
-
     @ParameterizedTest
     @ValueSource(ints = {1, 2, 3, 4})
     void givenNotificationFailsFewTimes_whenNotifyUserWithBookReviews_thenRetriesUntilSuccess(
@@ -500,7 +738,6 @@ public class TestLibrary {
         when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(createValidBookMock());
         when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
         when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book"));
-        // Fail 'failures' times in a row and then succeed
         NotificationException[] errors = new NotificationException[failures];
         for (int i = 0; i < failures; i++) {
             errors[i] = new NotificationException("error");
@@ -509,110 +746,5 @@ public class TestLibrary {
         assertDoesNotThrow(() -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
         verify(user, times(failures + 1)).sendNotification(anyString());
         verify(reviewServiceMock).close();
-    }
-
-    @Test
-    void givenNotificationAlwaysFails_whenNotifyUserWithBookReviews_thenThrowsAfterFiveAttempts() {
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(createValidBookMock());
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book"));
-        Mockito.doThrow(new NotificationException("error")).when(user).sendNotification(anyString());
-        NotificationException ex = assertThrows(NotificationException.class,
-                () -> library.notifyUserWithBookReviews(VALID_ISBN, VALID_USER_ID));
-        assertEquals("Notification failed!", ex.getMessage());
-        verify(user, times(5)).sendNotification(anyString());
-        verify(reviewServiceMock).close();
-    }
-
-    // getBookByISBN
-
-    @ParameterizedTest
-    @MethodSource("invalidIsbnProvider")
-    void givenInvalidIsbn_whenGetBookByISBN_thenThrowsInvalidIsbn(String isbn) {
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> library.getBookByISBN(isbn, VALID_USER_ID));
-        assertEquals("Invalid ISBN.", ex.getMessage());
-        verifyNoInteractions(databaseServiceMock);
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @ParameterizedTest
-    @MethodSource("invalidUserIdProvider")
-    void givenInvalidUserId_whenGetBookByISBN_thenThrowsInvalidUserId(String userId) {
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> library.getBookByISBN(VALID_ISBN, userId));
-        assertEquals("Invalid user Id.", ex.getMessage());
-        verifyNoInteractions(databaseServiceMock);
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @Test
-    void givenBookNotInDatabase_whenGetBookByISBN_thenThrowsBookNotFound() {
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(null);
-        BookNotFoundException ex = assertThrows(BookNotFoundException.class,
-                () -> library.getBookByISBN(VALID_ISBN, VALID_USER_ID));
-        assertEquals("Book not found!", ex.getMessage());
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @Test
-    void givenBookAlreadyBorrowed_whenGetBookByISBN_thenThrowsBookAlreadyBorrowed() {
-        Book book = createBookMock(VALID_ISBN, VALID_TITLE, VALID_AUTHOR, true);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
-        BookAlreadyBorrowedException ex = assertThrows(BookAlreadyBorrowedException.class,
-                () -> library.getBookByISBN(VALID_ISBN, VALID_USER_ID));
-        assertEquals("Book was already borrowed!", ex.getMessage());
-        verifyNoInteractions(reviewServiceMock);
-    }
-
-    @Test
-    void givenAvailableBookAndRegisteredUser_whenGetBookByISBN_thenUserNotifiedAndBookReturned() {
-        Book book = createBookMock(VALID_ISBN, "Dune", VALID_AUTHOR, false);
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book"));
-        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
-        assertSame(book, returnedBook);
-        verify(user).sendNotification("Reviews for 'Dune':\ngood book");
-        verify(reviewServiceMock).close();
-    }
-
-    @Test
-    void givenReviewServiceFails_whenGetBookByISBN_thenBookStillReturned() {
-        Book book = createValidBookMock();
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN))
-                .thenThrow(new ReviewException("Review Service Unavailable"));
-        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
-        assertSame(book, returnedBook);
-        verify(reviewServiceMock).close();
-        verifyNoInteractions(user);
-    }
-
-    @Test
-    void givenNotificationAlwaysFails_whenGetBookByISBN_thenBookStillReturned() {
-        Book book = createValidBookMock();
-        User user = Mockito.mock(User.class);
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(user);
-        when(reviewServiceMock.getReviewsForBook(VALID_ISBN)).thenReturn(List.of("good book"));
-        Mockito.doThrow(new NotificationException("error")).when(user).sendNotification(anyString());
-        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
-        assertSame(book, returnedBook);
-        verify(user, times(5)).sendNotification(anyString());
-    }
-
-    @Test
-    void givenUserNotRegistered_whenGetBookByISBN_thenBookStillReturnedWithoutFetchingReviews() {
-        Book book = createValidBookMock();
-        when(databaseServiceMock.getBookByISBN(VALID_ISBN)).thenReturn(book);
-        when(databaseServiceMock.getUserById(VALID_USER_ID)).thenReturn(null);
-        Book returnedBook = library.getBookByISBN(VALID_ISBN, VALID_USER_ID);
-        assertSame(book, returnedBook);
-        verifyNoInteractions(reviewServiceMock);
     }
 }
